@@ -25,10 +25,12 @@ def app():
         st.image(image, caption="Enter any caption here")
 
         st.markdown("Accuracy: 0.94")
-        st.markdown("F1-Score: 0.9667405764966741")
+        st.markdown("F1-Score: 0.967")
+        st.markdown("Precision: 0.957")
 
     with st.expander("XGBoost"):
         image = Image.open("images/XGBoost.png")
         st.image(image, caption="Enter any caption here")
         st.markdown("Accuracy: 0.94")
-        st.markdown("F1-Score: 0.9667405764966741")
+        st.markdown("F1-Score: 0.972")
+        st.markdown("Precision: 0.957")

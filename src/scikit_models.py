@@ -16,15 +16,19 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
+    balanced_accuracy_score,
     confusion_matrix,
     f1_score,
     precision_score,
+    roc_auc_score,
 )
 from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, RobustScaler
 from sklearn.utils import resample, shuffle
 from xgboost import XGBClassifier
+
+from helpers import read_from_dir, save_to_dir
 
 logger = logging.getLogger("data_prep")
 coloredlogs.install(
@@ -54,8 +58,10 @@ def eval_fn(y_test: np.ndarray, y_hat: np.ndarray, model_name: str):
     print("=================================================================")
     print(f"Confusion matrix:\n {cm}")
     print(f"Accuracy: {accuracy_score(y_test, y_hat)}")
+    print(f"Balanced-Accuracy-Score: {balanced_accuracy_score(y_test, y_hat)}")
     print(f"F1-Score: {f1_score(y_test, y_hat)}")
     print(f"Precsion-Score: {precision_score(y_test, y_hat)}")
+    print(f"ROC-AUC-Score: {roc_auc_score(y_test, y_hat)}")
     print("=================================================================")
     print("\n")
 
@@ -68,31 +74,48 @@ def main(
 ):
 
     logger.info("Starting main")
-    if sample_size <= 0:
-        logger.info("Using the complete dataset.")
-        df = pd.read_parquet("data/processed/df_nyc.parquet")
-    else:
+    df = read_from_dir("data/output")
+
+    if sample_size > 0:
         logger.info(f"Using sample of size {sample_size}.")
-        df = pd.read_parquet("data/processed/df_nyc.parquet").sample(
-            int(sample_size), random_state=152
-        )
-    df_weather = pd.read_parquet("data/external/weather_history_2018.parquet")
-    df_geo = pd.read_parquet("data/processed/df_station.parquet")
+        df = df.sample(int(sample_size), random_state=152)
+    else:
+        logger.info("Using the complete dataset.")
 
     df["target"] = (df.usertype == "Subscriber") * 1
     df["weekend"] = df["weekday"] >= 6
+    df["birthyear_x_gender"] = (df["birth_year"] == 1969) * (df["gender"] == 0)
+    df["age"] = 2018 - df["birth_year"]
+    df["age_sq"] = df["age"] ** 2
+    df["temp_max_sq"] = df["temp"] ** 2
+    df["hour_sq"] = df["hour"] ** 2
+    df["month_sq"] = df["month"] ** 2
+    df["trip_duration_min_sq"] = df["trip_duration_min"] ** 2
+    df["trip_duration_min_sq"] = df["trip_duration_min"] ** 2
+    df["trip_suburb"] = df["start_suburb"] + df["end_suburb"]
+    df["trip_station"] = df["start_station_id"].astype(str) + df[
+        "end_station_id"
+    ].astype(str)
 
     onehot_cols = ["gender", "weather_main"]
-    onehot_time_cols = ["weekday", "month", "hour"]
-    target_cols = ["start_suburb", "end_suburb"]
+    onehot_time_cols = ["month", "hour"]
+    target_cols = ["trip_suburb", "trip_station"]
     pass_cols = [
         "trip_duration_min",
+        "trip_duration_min_sq",
         "roundtrip",
         "distance",
-        "birth_year",
+        "birthyear_x_gender",
+        "age",
+        "age_sq",
+        "hour_sq",
+        "month_sq",
         "weekend",
         "temp",
         "temp_max",
+        "temp_max_sq",
+        "holiday",
+        "workingday",
     ]
     drop_cols = list(
         set(df.columns.tolist())
@@ -129,8 +152,9 @@ def main(
         transformers=[
             ("onehot_time", OneHotEncoder(drop="first"), onehot_time_cols_idx),
             ("onehot", OneHotEncoder(drop="first"), onehot_cols_idx),
-            ("target", ce.TargetEncoder(), target_cols_idx),
-            ("pass_cols", "passthrough", pass_cols_idx),
+            ("target", ce.MEstimateEncoder(), target_cols_idx),
+            # ("pass_cols", "passthrough", pass_cols_idx),
+            ("pass_cols", RobustScaler(), pass_cols_idx),
             ("drop_cols", "drop", drop_cols_idx),
         ]
     )
@@ -141,15 +165,16 @@ def main(
         pipeline = Pipeline(
             steps=[
                 ("ct", ct),
-                # ("scaler", RobustScaler()),
-                ("lr", LogisticRegression(max_iter=100)),
+                ("lr", LogisticRegression(max_iter=1000, solver="liblinear")),
             ]
         )
         param_grid = {
-            "lr__C": [0.1, 1, 10, 100],
-            "lr__penalty": ["l2", "l1"],
+            # "ct__target__m":[1,2],
+            "lr__C": [10**i for i in range(-6, 0)],
+            "lr__penalty": ["l2"],
+            # "lr__l1_ratio": [0.0, 0.5,1.0],
         }
-        clf = GridSearchCV(pipeline, param_grid=param_grid, cv=5, n_jobs=8)
+        clf = GridSearchCV(pipeline, param_grid=param_grid, cv=3, n_jobs=8)
         clf.fit(X_train, y_train)
         logger.info("Fitted Logistic Regression.")
         df_best = pd.DataFrame(clf.cv_results_).sort_values(
@@ -158,7 +183,7 @@ def main(
         df_best = df_best.head().loc[
             :, ["mean_test_score", "param_lr__C", "param_lr__penalty"]
         ]
-        logger.info(f"Best Params: {df_best}")
+        logger.info(f"Best Params:\n {df_best}")
         y_hat = clf.predict(X_test)
         eval_fn(y_test, y_hat, "LogisticRegression")
 
@@ -171,7 +196,7 @@ def main(
                 (
                     "xgb",
                     XGBClassifier(
-                        n_jobs=8,
+                        # n_jobs=8,
                         use_label_encoder=False,
                         objective="binary:logistic",
                         eval_metric="error",
@@ -190,7 +215,7 @@ def main(
             # "xgb__in_child_weight": [1, 2, 3],
             # "xgb__ubsample": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         }
-        clf = GridSearchCV(pipeline, param_grid, cv=5)
+        clf = GridSearchCV(pipeline, param_grid, cv=3, n_jobs=8)
         clf.fit(X_train, y_train)
         logger.info("Fitted XGBoost.")
         df_best = pd.DataFrame(clf.cv_results_).sort_values(

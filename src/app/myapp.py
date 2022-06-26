@@ -12,9 +12,9 @@ app = MultiPage()
 
 
 # Add all your applications (pages) here
-app.add_page("Model", page_model.app)
-app.add_page("Features", page_features.app)
 app.add_page("Data Exploration", page_exploration.app)
+app.add_page("Features", page_features.app)
+app.add_page("Model", page_model.app)
 
 # The main app
 app.run()

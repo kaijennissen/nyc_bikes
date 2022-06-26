@@ -1,6 +1,15 @@
+import logging
+
+import coloredlogs
 import pandas as pd
 
 if __name__ == "__main__":
+    logger = logging.getLogger("get_weather")
+    coloredlogs.install(
+        fmt="%(asctime)s - %(name)s - %(process)s - %(levelname)s - %(message)s",
+        level="DEBUG",
+    )
+    logger.info("Starting get_weather.")
     df_weather = pd.read_csv(
         "data/external/weather_history.csv", parse_dates=["dt_iso"]
     )
@@ -12,6 +21,5 @@ if __name__ == "__main__":
     df_weather.query("date >= '2018-01-01' and date <= '2018-12-31'")
     cols = df_weather.columns.tolist()
     df_weather = df_weather.filter(["date"] + cols[3:-1])
-    df_weather.set_index("date").to_parquet(
-        "data/external/weather_history_2018.parquet"
-    )
+    df_weather.reset_index().to_parquet("data/external/weather_history_2018.parquet")
+    logger.info("Finished get_weather.")

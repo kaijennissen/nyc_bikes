@@ -1,6 +1,5 @@
 import argparse
 import glob
-import json
 import logging
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
@@ -16,6 +15,8 @@ import pandas as pd
 import requests
 from geopy.extra.rate_limiter import RateLimiter
 from geopy.geocoders import Nominatim
+
+from helpers import read_from_dir, save_to_dir
 
 logger = logging.getLogger("data_prep")
 coloredlogs.install(
@@ -104,7 +105,7 @@ def make_weather_df(start_date, end_date, lat, lng) -> pd.DataFrame:
     df["timestamp"] = (
         (df.datetime - datetime.strptime("1970-01-01 00:00:00", "%Y-%m-%d %H:%M:%S"))
         .dt.total_seconds()
-        .astype(int)
+        .astype(np.int64)
     )
 
     weather_list = []
@@ -279,7 +280,7 @@ def data_prep(
     df["trip_duration"] = (df["stoptime"] - df["starttime"]).dt.seconds
     df["weekday"] = df["starttime"].dt.isocalendar().day
     df["month"] = df["starttime"].dt.month
-    df["year"] = df["starttime"].dt.isocalendar().year
+    df["year"] = df["starttime"].dt.year
     df["hour"] = df["starttime"].dt.hour
     # df["date"] = df["starttime"].dt.strftime("%Y-%m-%d")
     df["date"] = df.starttime.dt.date
@@ -362,7 +363,7 @@ def main(
     dir_out = Path("data/interim")
 
     if make_data_prep:
-        files = sorted(glob.glob(str(dir_in) + "/*2018**-citibike-tripdata.csv"))[::-1]
+        files = sorted(glob.glob(str(dir_in) + "/*2018**-citibike-tripdata.csv"))
 
         if multi_process:
             resu = process_all(files)
@@ -376,8 +377,12 @@ def main(
         # df_station = make_station_geolocation(df_station)
         # df_station.to_parquet("data/processed/df_station.parquet")
 
-        df = dd.read_parquet(dir_out / "2018**.parquet").compute()
-        df = df.reset_index(drop=True)
+        # df = dd.read_parquet(dir_out / "2018**.parquet").compute()
+        files = sorted(glob.glob(str(dir_out) + "/*2018**.parquet"))
+        df = pd.concat([pd.read_parquet(file_) for file_ in files]).reset_index(
+            drop=True
+        )
+
         df_station = pd.read_parquet("data/processed/df_station.parquet")
         for suffix in ["start", "end"]:
             df_merge = df_station.loc[
@@ -395,11 +400,40 @@ def main(
         )
         df.loc[df.start_suburb.isna(), "start_suburb"] = "Manhatten"
         df.loc[df.end_suburb.isna(), "end_suburb"] = "Manhatten"
+        save_to_dir(df, outdir="data/processed")
 
-        df.to_parquet("data/processed/df_nyc.parquet")
+        # Debugging
+        # df12 = df.query("month==12")
+        # grouped = df12.groupby(["date"])
+        # for day, df_m in grouped:
+        #     outfile = f"data/processed/test/{day}.parquet"
+        #     logger.info(f"writing to {outfile}")
+        #     df_m.to_parquet(outfile)
+        # files = sorted(glob.glob("data/processed/test/2018**.parquet"))
+        # ls_ = []
+        # for file_ in files:
+        #     logger.info(f"Reading: {file_}")
+        #     df = pd.read_parquet(file_)
+        #     ls_.append(df)
+        # logger.info("Finished reading!")
+
+        # df.to_parquet("data/processed/df_nyc.parquet")
 
     if weather:
-        df = pd.read_parquet("data/processed/df_nyc.parquet")
+        df = read_from_dir("data/processed")
+        # ls_ = []
+        # files = sorted(glob.glob("data/processed/2018**.parquet"))
+        # for file_ in files:
+        #     logger.info(f"Reading: {file_}")
+        #     df = pd.read_parquet(file_)
+        #     ls_.append(df)
+        # logger.info("Finished reading!")
+        # df = pd.concat(ls_)
+        # logger.info("Combined all files!")
+
+        # df = pd.concat([pd.read_parquet(file_) for file_ in files]).reset_index(drop=True)
+
+        # df = pd.read_parquet("data/processed/df_nyc.parquet")
         df["datetime"] = df["starttime"].dt.strftime("%Y-%m-%d %H:00")
 
         df_weather = pd.read_parquet(
@@ -429,7 +463,14 @@ def main(
             {"Haze": "Mist", "Fog": "Mist", "Drizzle": "Rain"}
         )
         df = df.merge(df_weather, how="left", on="datetime")
-        df.to_parquet("data/processed/df_nyc.parquet")
+
+        # df.to_parquet("data/processed/df_nyc.parquet")
+        save_to_dir(df, outdir="data/output")
+        # grouped = df.groupby(["year", "month"])
+        # for (year, month), df_m in grouped:
+        #     outfile = f"data/processed/{year}{str(month).zfill(2)}.parquet"
+        #     logger.info(f"writing to {outfile}")
+        #     df_m.to_parquet(outfile)
 
     # if False:
     #     df = pd.read_parquet("data/processed/df_nyc.parquet")

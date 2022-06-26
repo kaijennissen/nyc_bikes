@@ -47,7 +47,6 @@ def app():
             - OneHot oder TargetEncoder
         - PLZ
         - *Touristenattraktion in der Nähe*
-        -
     - **Features basierend auf der Strecke (Google bzw OpenMaps API):**
         - Distanz mit dem Fahrrad zwischen Start- und Zielstation
         - Fahrtzeit mit dem Fahrrad zwischen Start- und Zielstation
